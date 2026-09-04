@@ -5,7 +5,11 @@
 # context segment's own green→yellow→red gradient.
 input=$(cat)
 
-IFS=$'\t' read -r cwd model used total ctxpct eff fast five seven exceeds style < <(
+# \x01-joined, not @tsv: bash `read` treats tab as IFS-whitespace and
+# collapses empty fields between two tabs, silently shifting every field
+# after the first blank one (five_hour/seven_day are blank on spend-limit
+# accounts). \x01 isn't in the IFS-whitespace class, so empty fields survive.
+IFS=$'\x01' read -r cwd model used total ctxpct eff fast five seven spend spend_resets exceeds style < <(
   jq -r '[
     .cwd,
     .model.display_name,
@@ -14,11 +18,13 @@ IFS=$'\t' read -r cwd model used total ctxpct eff fast five seven exceeds style 
     (.context_window.used_percentage // 0 | round),
     .effort.level,
     .fast_mode,
-    (.rate_limits.five_hour.used_percentage // 0 | round),
-    (.rate_limits.seven_day.used_percentage // 0 | round),
+    (if .rate_limits.five_hour.used_percentage then (.rate_limits.five_hour.used_percentage | round) else "" end),
+    (if .rate_limits.seven_day.used_percentage then (.rate_limits.seven_day.used_percentage | round) else "" end),
+    (if .rate_limits.spend_limit.used_percentage then (.rate_limits.spend_limit.used_percentage | round) else "" end),
+    (.rate_limits.spend_limit.resets_at // ""),
     .exceeds_200k_tokens,
     .output_style.name
-  ] | @tsv' <<<"$input"
+  ] | join("")' <<<"$input"
 )
 
 # Auto-compact budget is config, not payload: `autoCompactWindow` is the token
@@ -74,9 +80,20 @@ fi
 eff_seg="${YELLOW}◆ ${eff}${R}"
 [ "$fast" = true ] && eff_seg="${eff_seg} ${RED}⚡${R}"
 
-# rate-limit windows (100% = that window's allowance spent)
-fcol=$ORANGE; [ "${five:-0}" -ge 85 ] 2>/dev/null && fcol=$RED
-scol=$PINK;   [ "${seven:-0}" -ge 85 ] 2>/dev/null && scol=$RED
+# rate-limit windows (100% = that window's allowance spent). Pro/Max accounts
+# get five_hour/seven_day; accounts behind a spend-limit gateway (Enterprise)
+# get spend_limit instead — never both, so render whichever is present.
+usage_seg=""
+if [ -n "$five" ] || [ -n "$seven" ]; then
+  fcol=$ORANGE; [ "${five:-0}" -ge 85 ] 2>/dev/null && fcol=$RED
+  scol=$PINK;   [ "${seven:-0}" -ge 85 ] 2>/dev/null && scol=$RED
+  usage_seg="${fcol}5h ${five:-0}%${R} ${DOT} ${scol}7d ${seven:-0}%${R}"
+elif [ -n "$spend" ]; then
+  spcol=$ORANGE; [ "${spend:-0}" -ge 85 ] 2>/dev/null && spcol=$RED
+  resets=""
+  [ -n "$spend_resets" ] && resets=" ${DOT} resets $(date -d "@$spend_resets" '+%b %-d' 2>/dev/null)"
+  usage_seg="${spcol}spend ${spend}%${R}${resets}"
+fi
 
 out="${B}${CYAN}${model}${R}"
 [ "${total:-0}" -ge 1000000 ] 2>/dev/null && out="${out} ${PINK}(1M)${R}"
@@ -86,6 +103,6 @@ out="${out} ${SEP} ${B}${PURPLE}${dir}${R}"
 [ -n "$branch" ] && out="${out}${ORANGE} ▸ ${R}${PINK}${branch}${R}${dirty}"
 out="${out} ${SEP} ${ctxcol}${uctx}/${tctx}${R}${compact_note}"
 out="${out} ${SEP} ${eff_seg}"
-out="${out} ${SEP} ${fcol}5h ${five}%${R} ${DOT} ${scol}7d ${seven}%${R}"
+[ -n "$usage_seg" ] && out="${out} ${SEP} ${usage_seg}"
 [ -n "$style" ] && [ "$style" != default ] && out="${out} ${SEP} ${GREEN}${style}${R}"
 printf '%b' "$out"
