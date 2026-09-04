@@ -52,6 +52,8 @@ model=${model% (1M context)}
 # git
 dir=$(basename "$cwd")
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
+dirty=""
+[ -n "$branch" ] && [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ] && dirty=" ${RED}✗${R}"
 
 # context: used vs model window, annotated with the compaction wall.
 # Gradient grades by proximity to compaction (the real first ceiling),
@@ -81,7 +83,7 @@ out="${B}${CYAN}${model}${R}"
 out="${out} ${SEP} ${B}${PURPLE}${dir}${R}"
 # Solid triangle: renders at full width on every terminal (the thin ⎇ glyph
 # clipped on some). One space each side — no extra left padding.
-[ -n "$branch" ] && out="${out}${ORANGE} ▸ ${R}${PINK}${branch}${R}"
+[ -n "$branch" ] && out="${out}${ORANGE} ▸ ${R}${PINK}${branch}${R}${dirty}"
 out="${out} ${SEP} ${ctxcol}${uctx}/${tctx}${R}${compact_note}"
 out="${out} ${SEP} ${eff_seg}"
 out="${out} ${SEP} ${fcol}5h ${five}%${R} ${DOT} ${scol}7d ${seven}%${R}"
